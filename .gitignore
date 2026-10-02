@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+
+# Vector store data
+.chromadb/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Poetry
+poetry.lock
+
+# Virtual environments
+.venv/
+venv/
+
+
+.DS_Store
+
+# DeepEval local cache, telemetry, and last-run results — not durable artifacts
+.deepeval/
+.deepeval-cache.json
+.deepeval_telemetry.txt

@@ -1,0 +1,5 @@
+public_base_url: ""
+log_level: INFO
+
+twilio:
+  validate_signature: true
