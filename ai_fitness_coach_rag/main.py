@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
+from ai_fitness_coach_rag.db.session import initialize_database
 from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 
-app = FastAPI(title="AI Fitness Coach")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="AI Fitness Coach", lifespan=lifespan)
 
 
 @app.get("/health")
