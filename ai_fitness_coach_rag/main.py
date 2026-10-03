@@ -7,6 +7,14 @@ from fastapi import FastAPI
 from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 
 app = FastAPI(title="AI Fitness Coach")
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Minimal liveness check for the app runtime."""
+    return {"status": "ok"}
+
+
 app.include_router(whatsapp_router)
 
 

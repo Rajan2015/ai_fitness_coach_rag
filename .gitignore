@@ -5,7 +5,7 @@
 .chromadb/
 
 # Python
-__pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -24,3 +24,4 @@ venv/
 .deepeval/
 .deepeval-cache.json
 .deepeval_telemetry.txt
+ngrok.yml

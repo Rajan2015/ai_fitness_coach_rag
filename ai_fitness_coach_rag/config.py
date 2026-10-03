@@ -34,6 +34,11 @@ def load_config() -> dict:
     ).rstrip("/")
     config["log_level"] = os.environ.get("LOG_LEVEL", config.get("log_level", "INFO"))
 
+    database = config.setdefault("database", {})
+    database["path"] = os.environ.get(
+        "DATABASE_PATH", database.get("path", "./data/fitness_coach.db")
+    )
+
     return config
 
 

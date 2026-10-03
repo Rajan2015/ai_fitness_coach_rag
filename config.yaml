@@ -3,3 +3,43 @@ log_level: INFO
 
 twilio:
   validate_signature: true
+
+database:
+  path: "./data/fitness_coach.db"
+
+scoring:
+  weights:
+    calorie: 0.30
+    protein: 0.25
+    activity: 0.20
+    water: 0.15
+    consistency: 0.10
+  calorie_tolerance_pct: 0.10
+  protein_target_g_per_kg: 1.8
+  steps_target: 10000
+  water_target_ml: 2500
+  consistency_window_days: 7
+
+
+llm:
+  provider: openai        # openai | anthropic
+  model: gpt-4o-mini
+  default_model: gpt-4o-mini
+  models:
+    default: gpt-4o-mini
+    intent: gpt-4o-mini
+    summary: gpt-4o
+    knowledge: gpt-4o-mini
+    plan: gpt-4o-mini
+    onboarding: gpt-4o-mini
+
+
+embeddings:
+ provider: openai             
+ model: text-embedding-3-small
+
+
+chromadb:
+ persist_dir: .chromadb/
+ collection_name: codebase
+

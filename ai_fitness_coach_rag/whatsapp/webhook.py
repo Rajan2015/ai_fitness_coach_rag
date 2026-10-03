@@ -1,4 +1,5 @@
 """Twilio WhatsApp inbound webhook: signature validation, payload parsing, idempotency, and reply dispatch."""
+
 from __future__ import annotations
 
 import threading
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from twilio.request_validator import RequestValidator
 
+from ai_fitness_coach_rag.agent.factory import get_orchestrator
 from ai_fitness_coach_rag.config import config
 from ai_fitness_coach_rag.observability.logger import get_logger
 from ai_fitness_coach_rag.whatsapp.twilio_client import get_twilio_client
@@ -59,7 +61,11 @@ class _SeenMessageCache:
             return False
 
     def _evict_expired(self, now: float) -> None:
-        expired = [sid for sid, seen_at in self._seen.items() if now - seen_at > self._ttl_seconds]
+        expired = [
+            sid
+            for sid, seen_at in self._seen.items()
+            if now - seen_at > self._ttl_seconds
+        ]
         for sid in expired:
             del self._seen[sid]
 
@@ -78,15 +84,25 @@ def _validate_signature(request: Request, form_params: dict[str, str]) -> None:
 
     validator = RequestValidator(twilio_settings["auth_token"])
     if not validator.validate(url, form_params, signature):
-        logger.warning("Rejected inbound webhook request with invalid X-Twilio-Signature")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Twilio signature")
+        logger.warning(
+            "Rejected inbound webhook request with invalid X-Twilio-Signature"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Twilio signature"
+        )
 
 
 def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
     num_media = int(form_params.get("NumMedia", "0") or "0")
-    media_urls = [form_params[f"MediaUrl{i}"] for i in range(num_media) if f"MediaUrl{i}" in form_params]
+    media_urls = [
+        form_params[f"MediaUrl{i}"]
+        for i in range(num_media)
+        if f"MediaUrl{i}" in form_params
+    ]
     media_content_types = [
-        form_params[f"MediaContentType{i}"] for i in range(num_media) if f"MediaContentType{i}" in form_params
+        form_params[f"MediaContentType{i}"]
+        for i in range(num_media)
+        if f"MediaContentType{i}" in form_params
     ]
     return InboundMessage(
         message_sid=form_params.get("MessageSid", ""),
@@ -100,12 +116,14 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
 
 
 def _build_reply(message: InboundMessage) -> str:
-    """Placeholder reply generator until the agent orchestrator (Phase 3) is wired in."""
+    """Route a message through the active agent orchestrator."""
     if message.is_media:
         return "Thanks, I received your attachment. Processing it is coming soon!"
     if not message.body.strip():
         return "Sorry, I didn't catch a message. Could you try again?"
-    return f'Got it: "{message.body.strip()}". I\'m still learning how to respond fully!'
+
+    orchestrator = get_orchestrator()
+    return orchestrator.handle_message(message.from_number, message.body)
 
 
 @router.post("/twilio", response_class=PlainTextResponse)
@@ -118,7 +136,9 @@ async def twilio_webhook(request: Request) -> PlainTextResponse:
 
     message = _parse_inbound_message(form_params)
     if not message.message_sid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing MessageSid")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing MessageSid"
+        )
 
     if _seen_messages.seen_before(message.message_sid):
         logger.info("Duplicate inbound message %s ignored", message.message_sid)
