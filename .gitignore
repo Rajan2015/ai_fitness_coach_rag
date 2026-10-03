@@ -25,3 +25,6 @@ venv/
 .deepeval-cache.json
 .deepeval_telemetry.txt
 ngrok.yml
+
+
+**/data/*

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import asyncio
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -115,7 +116,7 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
     )
 
 
-def _build_reply(message: InboundMessage) -> str:
+async def _build_reply_async(message: InboundMessage) -> str:
     """Route a message through the active agent orchestrator."""
     if message.is_media:
         return "Thanks, I received your attachment. Processing it is coming soon!"
@@ -123,7 +124,12 @@ def _build_reply(message: InboundMessage) -> str:
         return "Sorry, I didn't catch a message. Could you try again?"
 
     orchestrator = get_orchestrator()
-    return orchestrator.handle_message(message.from_number, message.body)
+    return await orchestrator.handle_message(message.from_number, message.body)
+
+
+def _build_reply(message: InboundMessage) -> str:
+    """Synchronous compatibility wrapper for callers outside the HTTP path."""
+    return asyncio.run(_build_reply_async(message))
 
 
 @router.post("/twilio", response_class=PlainTextResponse)
@@ -151,7 +157,7 @@ async def twilio_webhook(request: Request) -> PlainTextResponse:
         message.num_media,
     )
 
-    reply_text = _build_reply(message)
+    reply_text = await _build_reply_async(message)
     get_twilio_client().send_text(to=message.from_number, body=reply_text)
 
     return PlainTextResponse("", status_code=status.HTTP_200_OK)

@@ -1,54 +1,105 @@
-"""Minimal orchestration layer that routes inbound messages to agent intents."""
+"""Minimal orchestration layer that routes inbound messages to agent intents.
+
+Conversation state (pending_flow, last_intent) is persisted per-thread
+(thread_id=phone) by a LangGraph SQLite checkpointer instead of an in-memory
+dict, so state survives process restarts and is inspectable for debugging.
+"""
 
 from __future__ import annotations
 
-from ai_fitness_coach_rag.agent.router import Intent, route_message
-from ai_fitness_coach_rag.agent.state import AgentState
+import asyncio
+
+from langchain.agents import create_agent
+
+from ai_fitness_coach_rag.agent.state import ConversationState
+from ai_fitness_coach_rag.agent.tools.onboarding_tools import (
+    apply_onboarding_answer,
+    get_or_create_user,
+    next_onboarding_slot,
+    onboarding_welcome_message,
+)
+from ai_fitness_coach_rag.db.session import SessionLocal
+from ai_fitness_coach_rag.llm.factory import get_llm
+from ai_fitness_coach_rag.memory.short_term import (
+    get_checkpointer,
+    get_summarization_middleware,
+    thread_config,
+)
+
+
+def _handle_onboarding(user_id: str, text: str) -> tuple[str | None, str | None]:
+    """Return (reply, pending_flow). Reply is None once the user is onboarded."""
+    session = SessionLocal()
+    try:
+        user, is_new = get_or_create_user(session, user_id)
+
+        if is_new:
+            slot = next_onboarding_slot(user)
+            assert slot is not None  # a brand-new profile always has slots left
+            return f"{onboarding_welcome_message()} {slot.prompt}", "onboarding"
+
+        if user.onboarding_complete:
+            return None, None
+
+        slot = next_onboarding_slot(user)
+        if slot is None:
+            return None, None
+
+        if not apply_onboarding_answer(session, user, slot, text):
+            return slot.error, "onboarding"
+
+        next_slot = next_onboarding_slot(user)
+        if next_slot is not None:
+            return next_slot.prompt, "onboarding"
+
+        return (
+            "Thanks! Your profile is all set. You can now log food, workouts, "
+            "and metrics, or ask me anything fitness-related."
+        ), None
+    finally:
+        session.close()
 
 
 class AgentOrchestrator:
-    """Thin facade around the message router and state tracking."""
+    """Agent facade using course-style memory and summarization."""
 
     def __init__(self) -> None:
-        self._states: dict[str, AgentState] = {}
+        self._agent = None
+        self._agent_loop: asyncio.AbstractEventLoop | None = None
 
-    def _get_state(self, user_id: str) -> AgentState:
-        state = self._states.get(user_id)
-        if state is None:
-            state = AgentState(user_id=user_id)
-            self._states[user_id] = state
-        return state
-
-    def handle_message(self, user_id: str, text: str) -> str:
-        state = self._get_state(user_id)
-        intent = route_message(text, pending_flow=state.pending_flow)
-        state.last_intent = intent
-
-        if intent == Intent.LOG_FOOD:
-            return "I can log that food entry. Tell me the item and calories or protein if you want it recorded."
-        if intent == Intent.LOG_WORKOUT:
-            return "I can capture that workout. Share the exercise, duration, and any calories burned."
-        if intent == Intent.LOG_METRIC:
-            return "I can record that metric. Send the metric name and value."
-        if intent == Intent.ONBOARDING:
-            state.pending_flow = "onboarding"
-            return "Let’s set up your profile. I’ll ask for age, sex, height, weight, activity level, and goals."
-        if intent == Intent.REQUEST_SUMMARY:
-            return (
-                "I can summarize your recent progress once your log data is available."
+    async def _get_agent(self):
+        """Create the LangChain agent once for the active event loop."""
+        loop = asyncio.get_running_loop()
+        if self._agent is None or self._agent_loop is not loop:
+            self._agent = create_agent(
+                model=get_llm(),
+                tools=[],
+                middleware=[get_summarization_middleware()],
+                checkpointer=await get_checkpointer(),
             )
-        if intent == Intent.REQUEST_PLAN:
-            return "I can build a meal or workout plan based on your profile and food preferences."
-        if intent == Intent.QUERY_KNOWLEDGE:
-            return "I can answer fitness and nutrition questions, but keep the answer grounded in your goals and known facts."
-        if intent == Intent.CONFIRM_PENDING:
-            return (
-                "I’m waiting on your pending confirmation before I finalize that step."
-            )
-        return "I can help with food logging, workouts, metrics, onboarding, or fitness guidance."
+            self._agent_loop = loop
+        return self._agent
+
+    async def handle_message(self, user_id: str, text: str) -> str:
+        onboarding_reply, _ = _handle_onboarding(user_id, text)
+        if onboarding_reply is not None:
+            return onboarding_reply
+
+        agent = await self._get_agent()
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": text}]},
+            config=thread_config(user_id),
+        )
+        return result["messages"][-1].content
+
+    async def get_state(self, user_id: str) -> ConversationState:
+        """Return the persisted conversation state for one user (debugging/tests)."""
+        agent = await self._get_agent()
+        snapshot = await agent.aget_state(thread_config(user_id))
+        return snapshot.values
 
 
-def handle_message(user_id: str, text: str) -> str:
-    """Convenience wrapper for callers that do not need a long-lived state object."""
+async def handle_message(user_id: str, text: str) -> str:
+    """Convenience wrapper for callers that do not need a long-lived orchestrator."""
     orchestrator = AgentOrchestrator()
-    return orchestrator.handle_message(user_id, text)
+    return await orchestrator.handle_message(user_id, text)

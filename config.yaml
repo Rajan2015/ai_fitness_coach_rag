@@ -5,7 +5,7 @@ twilio:
   validate_signature: true
 
 database:
-  path: "./data/fitness_coach.db"
+  path: ".fitness_coach/data/fitness_coach.db"
 
 scoring:
   weights:
@@ -43,3 +43,8 @@ chromadb:
  persist_dir: .chromadb/
  collection_name: codebase
 
+
+memory:
+ db_path: .fitness_coach/memory/memory.db
+ summarize_at_tokens: 4000
+ keep_last_messages: 20
