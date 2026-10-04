@@ -10,6 +10,7 @@ database:
 qdrant:
   nutrition_collection: "nutrition_facts"
   nutrition_model: "qdrant/bm25"
+  final_candidates: 3
 
 scoring:
   weights:
@@ -31,12 +32,7 @@ llm:
   default_model: gpt-4o-mini
   models:
     default: gpt-4o-mini
-    intent: gpt-4o-mini
-    summary: gpt-4o
-    knowledge: gpt-4o-mini
-    plan: gpt-4o-mini
-    onboarding: gpt-4o-mini
-    logging: gpt-4o-mini
+    confirm: gpt-4o-mini
 
 
 embeddings:
@@ -51,5 +47,5 @@ chromadb:
 
 memory:
  db_path: .fitness_coach/memory/memory.db
- summarize_at_tokens: 4000
- keep_last_messages: 20
+ summarize_at_tokens: 2000
+ keep_last_messages: 10

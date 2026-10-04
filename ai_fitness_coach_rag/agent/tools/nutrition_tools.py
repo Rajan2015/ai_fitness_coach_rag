@@ -94,5 +94,6 @@ def lookup_nutrition(query: str) -> list[dict]:
     the user's stated quantity (source='database'); if none are a good match,
     estimate the values yourself (source='estimated').
     """
-    return search_nutrition_candidates(query)
+    final_candidates = config.get("qdrant", {}).get("final_candidates", 3)
+    return search_nutrition_candidates(query, k=final_candidates)
 

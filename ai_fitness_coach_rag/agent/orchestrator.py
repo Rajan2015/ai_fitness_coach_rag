@@ -1,4 +1,4 @@
-"""Minimal orchestration layer that routes inbound messages to agent intents.
+"""Minimal orchestration layer that drives the main tool-calling agent.
 
 Conversation state (chat history + pending tool-call confirmations) is
 persisted per-thread (thread_id=phone) by a LangGraph SQLite checkpointer, so
@@ -6,7 +6,9 @@ state survives process restarts and is inspectable for debugging. Food/
 workout/metric logging is confirmed via `HumanInTheLoopMiddleware`, which
 pauses the graph (`interrupt()`) before `log_food`/`log_workout`/`log_metric`
 execute and resumes on the user's next YES/NO reply (`Command(resume=...)`)
-— no separate pending-state table.
+— no separate pending-state table. All intent decisions (what to log, when
+to fetch a summary, etc.) are made by the main agent itself via its tools
+and system prompt — there is no separate LLM intent-classification step.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langgraph.types import Command
 
 from ai_fitness_coach_rag.agent.state import ConversationState
+from ai_fitness_coach_rag.agent.tools.log_retrieval_tools import get_fitness_logs
 from ai_fitness_coach_rag.agent.tools.logging_tools import (
     log_food,
     log_metric,
@@ -120,7 +123,7 @@ class AgentOrchestrator:
         if self._agent is None or self._agent_loop is not loop:
             self._agent = create_agent(
                 model=get_llm(),
-                tools=[lookup_nutrition, log_food, log_workout, log_metric],
+                tools=[lookup_nutrition, log_food, log_workout, log_metric, get_fitness_logs],
                 system_prompt=SYSTEM_PROMPT,
                 middleware=[
                     get_summarization_middleware(),
@@ -185,7 +188,7 @@ class AgentOrchestrator:
                 else:
                     self._confirm_retries[user_id] = retries
                     prompt = await self._natural_language_confirm(pending)
-                    return f"Sorry, I didn't catch that. {prompt}"
+                    return prompt
             else:
                 self._confirm_retries.pop(user_id, None)
 

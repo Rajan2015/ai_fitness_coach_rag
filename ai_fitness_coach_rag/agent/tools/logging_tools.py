@@ -10,7 +10,7 @@ the LangGraph `AsyncSqliteSaver` checkpointer. No separate pending-state table.
 from __future__ import annotations
 
 import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from langchain_core.tools import tool
 from langgraph.config import get_config
@@ -72,11 +72,26 @@ def log_food(entries: list[FoodLogEntry]) -> str:
 
 @tool
 def log_workout(
-    activity: str,
-    duration_minutes: float | None = None,
-    calories_burned: float | None = None,
+    activity: Annotated[
+        str, Field(description="Workout/exercise name, e.g. 'running', 'bench press'")
+    ],
+    duration_minutes: Annotated[
+        float | None,
+        Field(description="Duration in minutes, if stated or reasonably inferable"),
+    ] = None,
+    calories_burned: Annotated[
+        float | None,
+        Field(
+            description="Calories burned. Use the user's stated value if given; "
+            "otherwise estimate from the activity type and duration (typical MET "
+            "values) rather than leaving it blank"
+        ),
+    ] = None,
 ) -> str:
-    """Log a workout/exercise session for today."""
+    """Log a workout/exercise session for today. Always try to populate
+    duration_minutes and calories_burned — estimate calories_burned yourself
+    when the user doesn't state it.
+    """
     session = SessionLocal()
     try:
         user, _ = get_or_create_user(session, _current_user_id())
@@ -98,7 +113,21 @@ def log_workout(
 
 
 @tool
-def log_metric(metric_name: str, value: float, unit: str | None = None) -> str:
+def log_metric(
+    metric_name: Annotated[
+        str,
+        Field(
+            description="Normalized lowercase metric key, e.g. 'weight', "
+            "'steps', 'sleep_hours', 'heart_rate', 'body_fat_pct'. Use "
+            "'water' for water intake in ml."
+        ),
+    ],
+    value: Annotated[float, Field(description="Numeric value of the metric")],
+    unit: Annotated[
+        str | None,
+        Field(description="Unit for the value, e.g. 'kg', 'steps', 'hours', 'bpm'"),
+    ] = None,
+) -> str:
     """Log a body/health metric for today (e.g. weight, steps, sleep,
     heart_rate). Use metric_name='water' for water intake in ml.
     """

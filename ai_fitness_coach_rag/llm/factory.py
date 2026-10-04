@@ -27,11 +27,6 @@ def _resolve_model_name(flow: str | None = None) -> str:
     if flow_key in model_map:
         return model_map[flow_key]
 
-    if flow_key in {"route", "intent", "classification"}:
-        return model_map.get("intent") or default_model or "gpt-4o-mini"
-    if flow_key in {"summary", "summarize", "insight"}:
-        return model_map.get("summary") or default_model or "gpt-4o"
-
     return model_map.get("default") or default_model or "gpt-4o-mini"
 
 
