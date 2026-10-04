@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from ai_fitness_coach_rag.agent.tools.nutrition_tools import (
+    ensure_nutrition_collection_indexed,
+)
 from ai_fitness_coach_rag.db.session import initialize_database
 from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 
@@ -13,6 +16,7 @@ from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    ensure_nutrition_collection_indexed()
     yield
 
 

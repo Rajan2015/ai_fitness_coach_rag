@@ -1,8 +1,12 @@
 """Minimal orchestration layer that routes inbound messages to agent intents.
 
-Conversation state (pending_flow, last_intent) is persisted per-thread
-(thread_id=phone) by a LangGraph SQLite checkpointer instead of an in-memory
-dict, so state survives process restarts and is inspectable for debugging.
+Conversation state (chat history + pending tool-call confirmations) is
+persisted per-thread (thread_id=phone) by a LangGraph SQLite checkpointer, so
+state survives process restarts and is inspectable for debugging. Food/
+workout/metric logging is confirmed via `HumanInTheLoopMiddleware`, which
+pauses the graph (`interrupt()`) before `log_food`/`log_workout`/`log_metric`
+execute and resumes on the user's next YES/NO reply (`Command(resume=...)`)
+— no separate pending-state table.
 """
 
 from __future__ import annotations
@@ -10,14 +14,23 @@ from __future__ import annotations
 import asyncio
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langgraph.types import Command
 
 from ai_fitness_coach_rag.agent.state import ConversationState
+from ai_fitness_coach_rag.agent.tools.logging_tools import (
+    log_food,
+    log_metric,
+    log_workout,
+)
+from ai_fitness_coach_rag.agent.tools.nutrition_tools import lookup_nutrition
 from ai_fitness_coach_rag.agent.tools.onboarding_tools import (
     apply_onboarding_answer,
     get_or_create_user,
     next_onboarding_slot,
     onboarding_welcome_message,
 )
+from ai_fitness_coach_rag.agent.prompts import get_prompt
 from ai_fitness_coach_rag.db.session import SessionLocal
 from ai_fitness_coach_rag.llm.factory import get_llm
 from ai_fitness_coach_rag.memory.short_term import (
@@ -25,6 +38,11 @@ from ai_fitness_coach_rag.memory.short_term import (
     get_summarization_middleware,
     thread_config,
 )
+
+SYSTEM_PROMPT = get_prompt("fitness_coach_system")
+
+CONFIRM_YES = {"yes", "y", "confirm", "ok", "okay", "sure", "yep", "yeah"}
+CONFIRM_NO = {"no", "n", "cancel", "nope", "discard"}
 
 
 def _handle_onboarding(user_id: str, text: str) -> tuple[str | None, str | None]:
@@ -60,6 +78,25 @@ def _handle_onboarding(user_id: str, text: str) -> tuple[str | None, str | None]
         session.close()
 
 
+def _parse_decision(text: str) -> dict:
+    """Map a free-text YES/NO reply to a HumanInTheLoopMiddleware decision."""
+    normalized = text.strip().lower()
+    if normalized in CONFIRM_YES:
+        return {"type": "approve"}
+    if normalized in CONFIRM_NO:
+        return {"type": "reject", "message": "User declined to log this."}
+    return {"type": "reject", "message": f"User replied: {text}"}
+
+
+def _format_interrupt(interrupts) -> str:
+    """Render the paused tool-call(s) as a human-readable confirmation prompt."""
+    lines = []
+    for item in interrupts:
+        for action in item.value.get("action_requests", []):
+            lines.append(f"- {action['name']}({action['args']})")
+    return "Log this?\n" + "\n".join(lines) + "\nReply YES to confirm or NO to cancel."
+
+
 class AgentOrchestrator:
     """Agent facade using course-style memory and summarization."""
 
@@ -73,12 +110,29 @@ class AgentOrchestrator:
         if self._agent is None or self._agent_loop is not loop:
             self._agent = create_agent(
                 model=get_llm(),
-                tools=[],
-                middleware=[get_summarization_middleware()],
+                tools=[lookup_nutrition, log_food, log_workout, log_metric],
+                system_prompt=SYSTEM_PROMPT,
+                middleware=[
+                    get_summarization_middleware(),
+                    HumanInTheLoopMiddleware(
+                        interrupt_on={
+                            "log_food": True,
+                            "log_workout": True,
+                            "log_metric": True,
+                        }
+                    ),
+                ],
                 checkpointer=await get_checkpointer(),
             )
             self._agent_loop = loop
         return self._agent
+
+    async def _pending_interrupts(self, agent, config: dict):
+        snapshot = await agent.aget_state(config)
+        for task in snapshot.tasks:
+            if task.interrupts:
+                return task.interrupts
+        return None
 
     async def handle_message(self, user_id: str, text: str) -> str:
         onboarding_reply, _ = _handle_onboarding(user_id, text)
@@ -86,10 +140,23 @@ class AgentOrchestrator:
             return onboarding_reply
 
         agent = await self._get_agent()
-        result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": text}]},
-            config=thread_config(user_id),
-        )
+        config = thread_config(user_id)
+
+        pending = await self._pending_interrupts(agent, config)
+        if pending:
+            action_count = len(pending[0].value.get("action_requests", []))
+            decision = _parse_decision(text)
+            result = await agent.ainvoke(
+                Command(resume=[decision] * action_count), config=config
+            )
+        else:
+            result = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": text}]}, config=config
+            )
+
+        new_interrupts = result.get("__interrupt__")
+        if new_interrupts:
+            return _format_interrupt(new_interrupts)
         return result["messages"][-1].content
 
     async def get_state(self, user_id: str) -> ConversationState:

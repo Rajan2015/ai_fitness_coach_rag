@@ -16,7 +16,7 @@ poetry.lock
 # Virtual environments
 .venv/
 venv/
-
+.venv-1/
 
 .DS_Store
 

@@ -7,6 +7,10 @@ twilio:
 database:
   path: ".fitness_coach/data/fitness_coach.db"
 
+qdrant:
+  nutrition_collection: "nutrition_facts"
+  nutrition_model: "qdrant/bm25"
+
 scoring:
   weights:
     calorie: 0.30
@@ -32,6 +36,7 @@ llm:
     knowledge: gpt-4o-mini
     plan: gpt-4o-mini
     onboarding: gpt-4o-mini
+    logging: gpt-4o-mini
 
 
 embeddings:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+from ai_fitness_coach_rag.agent.prompts import get_prompt
 from ai_fitness_coach_rag.llm.factory import get_llm
 
 
@@ -41,13 +42,7 @@ def _classify_with_llm(text: str) -> Intent | None:
     if llm is None:
         return None
 
-    prompt = (
-        "You are classifying a fitness coach text message. "
-        "Return exactly one intent from this list: "
-        "log_food, log_workout, log_metric, onboarding, query_knowledge, "
-        "request_summary, request_plan, off_topic. "
-        f"Message: {text}"
-    )
+    prompt = get_prompt("intent_classifier", message=text)
 
     try:
         response = llm.invoke(prompt)

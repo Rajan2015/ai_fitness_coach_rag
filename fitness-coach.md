@@ -80,6 +80,7 @@ README.md, pyproject.toml, .env.example
 - **Data lifecycle command**: a `/forget_me` style chat command to wipe a user's DB rows + STM thread (privacy-friendly for a health-data showcase).
 - **Timezone & units**: profile stores IANA timezone + unit system (metric/imperial); "daily" boundaries and morning nudge scheduling computed in user's local time, not server UTC.
 - **Confirm-flow expiry**: a pending vision-estimate confirmation expires after N minutes/messages to avoid stale state blocking the router.
+- **Logging confirmation (food/workout/metric)**: implemented via LangGraph's `HumanInTheLoopMiddleware` — it pauses (`interrupt()`) the agent graph before `log_food`/`log_workout`/`log_metric` execute, persisted durably by the existing `AsyncSqliteSaver` checkpointer, and resumes on the user's next YES/NO reply (`Command(resume=...)`). No separate `PendingLog`/pending-state SQL table — the checkpointer we already wire for STM is the single source of truth for in-flight confirmations too.
 - **Dietary-preference filtering**: `plan_tools.py` must filter meal/workout suggestions against profile's dietary pref/allergies, not just return generic plans.
 - **Semantic cache**: reinstate Redis semantic cache (mirroring `cache/semantic_cache.py`), scoped ONLY to `knowledge_tools` RAG lookups (e.g. "how much protein in eggs") — never caches logging/scoring/personalized responses. Key includes query + domain tag; TTL-based.
 - **Eval coverage gap**: added `dataset_onboarding.json` + onboarding slot-filling accuracy to Phase 8.
@@ -167,10 +168,11 @@ Decision: v1 stays simulated/CSV-JSON import only (per Scope boundaries). If ext
 ## RAG architecture revision (supersedes earlier Chroma-only / single-RAG-pipeline design)
 On recheck, the original plan wrongly treated nutrition/exercise/knowledge data as one RAG pipeline. Revised to 3 distinct strategies based on reliability needs:
 
-1. **Nutrition facts & exercise database — structured lookup, NOT vector RAG.**
-   - Source: **hand-curated dataset** (~100-200 common foods/dishes incl. composite/cooked dishes like roti/dal/paneer tikka, and ~100-200 exercises with muscle group/equipment/difficulty). Decided to skip USDA FoodData Central / Free Exercise DB external integration for v1 — curated-only keeps scope small.
-   - Storage: SQLite tables, queried via exact + fuzzy string match (`rapidfuzz`), not embedding similarity. Feeds `nutrition_tools.lookup_nutrition` and `plan_tools.get_workout_plan` deterministically.
-   - Fallback: if an item isn't in the curated set, LLM may estimate (e.g. vision calorie estimate, or obscure dish) — but MUST be labeled "estimated, not verified" in the reply and tagged `source=estimated` in DB (distinct from `source=database` verified lookups). Never silently blended with verified facts.
+1. **Nutrition facts & exercise database — Qdrant BM25 sparse lexical retrieval, agent decides the match.** *(superseded 2026-10-04 — see "Nutrition + logging architecture v2" below; was rapidfuzz/SQL-only.)*
+   - Source: **hand-curated dataset** (~150-200 common foods/dishes incl. composite/cooked dishes like roti/dal/paneer tikka). Decided to skip USDA FoodData Central / Free Exercise DB external integration for v1 — curated-only keeps scope small.
+   - Storage: seed JSON indexed into a Qdrant collection (`nutrition_facts`) as **sparse-only BM25 vectors** (`FastEmbedSparse("Qdrant/bm25")`, `RetrievalMode.SPARSE`) — lexical, not dense/semantic similarity.
+   - The tool-calling agent calls `lookup_nutrition` (BM25 retrieval, top-5 candidates) and itself decides which candidate matches and how to scale it, or estimates directly if nothing fits — RAG pattern (retrieve, then LLM reasons over it), not a deterministic threshold match.
+   - Fallback: if nothing matches well, the agent estimates itself — but MUST be labeled "estimated, not verified" in the reply and tagged `source=estimated` in DB (distinct from `source=database` verified lookups). Never silently blended with verified facts.
 
 2. **General fitness/nutrition knowledge (articles, principles, Q&A, recipes) — Qdrant + hybrid retrieval (dense+BM25)**, mirroring reference repo's `hybrid_qdrant.py` (`FastEmbedSparse` BM25 + dense, `RetrievalMode.HYBRID`). Switched from Chroma-dense-only because: (a) Chroma has no hybrid/BM25 support in the reused patterns, (b) hybrid matters here — queries mix vague semantic asks ("high protein breakfast ideas") with exact-term asks ("what's DOMS", specific recipe/ingredient names) where keyword matching improves precision. Requires running Qdrant (local Docker or cloud free tier) — added as new infra dependency.
    - This is the ONLY data category served by `knowledge_tools.search_knowledge_base`. It must never be the source of truth for a logged calorie/macro number.
@@ -183,6 +185,15 @@ On recheck, the original plan wrongly treated nutrition/exercise/knowledge data 
 - NEW fuzzy-match lookup logic in `nutrition_tools.py` (and workout equivalent in `plan_tools.py`) using `rapidfuzz` — add `rapidfuzz` to dependencies.
 - `db/models.py`: add `source` field (`database` | `estimated`) to logged food/exercise entries for traceability.
 - Infra: Qdrant (Docker Compose service for local dev, or Qdrant Cloud free tier) replaces Chroma's zero-infra embedded store — add to README setup steps and `.env.example` (QDRANT_URL/QDRANT_API_KEY).
+
+## Nutrition + logging architecture v2 (2026-10-04 — supersedes rapidfuzz/SQL nutrition lookup and any bespoke pending-confirmation table)
+Course-correction after building a rapidfuzz+SQL nutrition lookup and a custom `PendingLog` table: both skipped RAG/agent patterns this project exists to showcase, and duplicated state the LangGraph checkpointer already provides. Decided:
+
+1. **Nutrition lookup → Qdrant BM25 (sparse), not rapidfuzz/SQL.** `agent/tools/nutrition_tools.py` indexes `db/seed_data/nutrition_facts.json` into a Qdrant collection (`nutrition_facts`) using `FastEmbedSparse("Qdrant/bm25")` + `RetrievalMode.SPARSE` (lexical food names don't need dense embeddings). `lookup_nutrition` is a real `@tool` returning top-5 candidates.
+2. **The agent decides, not a structured-output sub-call.** The primary tool-calling agent (already an LLM) picks the best candidate and scaling factor, or estimates itself — no separate "resolve" LLM call. This is driven by the system prompt in `agent/orchestrator.py`.
+3. **Real tools + `HumanInTheLoopMiddleware`, drop `PendingLog`.** `logging_tools.py` now exposes deterministic `@tool` functions (`log_food`, `log_workout`, `log_metric`) bound directly to `create_agent(tools=[...])`. Confirmation-before-save uses `HumanInTheLoopMiddleware(interrupt_on={...})`, which pauses the graph via `interrupt()` before those tools execute; the orchestrator resumes with `Command(resume=[{"type": "approve"|"reject", ...}])` based on the user's next reply. This is backed by the `AsyncSqliteSaver` checkpointer already wired for STM/summarization — no bespoke SQL table for pending state. `db/models.py`'s `NutritionFact` and `PendingLog` tables were removed (dead after this change).
+4. **Onboarding unchanged for now** — still DB-column state on `User` (not yet folded into the interrupt-based graph); revisit later if we want one consistent state mechanism.
+5. Infra: requires Qdrant reachable at `QDRANT_URL` (default `http://localhost:6333`, local Docker) — added to `config.yaml`/`.env.example`. `rapidfuzz` dependency dropped; `qdrant-client` added explicitly (already a transitive dep via `langchain-qdrant`).
 
 ## RAG showcase enhancements (added after reassessing RAG surface area — too thin otherwise)
 Three enhancements selected to make this a stronger RAG demonstration without touching numeric reliability (nutrition/exercise facts stay structured lookup, untouched by this section):
@@ -226,7 +237,7 @@ Recheck surfaced that this wasn't explicit anywhere as one picture — consolida
 | **Computed daily scores** | SQL `Score` table | Durable, derived from DailyLog/DeviceMetric via scoring.py. |
 | **Profile (age/weight/goals/dietary pref/timezone/units)** | SQL `User` table | Durable, source of truth. |
 | **Soft preference facts** (e.g. "dislikes running") | `memory/long_term.py` fact store (SQL table, not vectorized) | Durable, lightweight notes, not embeddings. |
-| **Nutrition facts & exercise database** | SQL `seed_data` tables, fuzzy-matched | Durable, static reference data (not vectors). |
+| **Nutrition facts & exercise database** | **Qdrant** — sparse-only BM25 collection (`nutrition_facts`), agent decides the match from retrieved candidates | Durable, static curated corpus (seed JSON), lexical retrieval not embedding similarity. |
 | **General fitness/nutrition knowledge + exercise technique** (two collections: `fitness_principles`, `exercise_technique`) | **Qdrant** — hybrid dense+BM25 vectors, reranked (cross-encoder) before use | Durable, static curated corpora — vectorized for genuine narrative/fuzzy-query content only. |
 | **Personal documents** (user-uploaded diet charts/trainer plans) | **Qdrant** — per-user isolated collection/namespace (hashed `user_id` metadata filter enforced at query time) | Durable until `/forget_me` purges that user's vectors. Only retrievable by the owning user — never cross-user. |
 | **Semantic cache** (past knowledge-base queries + cached answers) | Redis, vector index (HNSW) scoped to `knowledge_tools` only | TTL-based, not personalized, never caches logging/scoring/user-specific replies. |

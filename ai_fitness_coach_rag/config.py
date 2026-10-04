@@ -39,6 +39,11 @@ def load_config() -> dict:
         "DATABASE_PATH", database.get("path", "./data/fitness_coach.db")
     )
 
+    qdrant = config.setdefault("qdrant", {})
+    # Secrets never live in config.yaml — always sourced from the environment.
+    qdrant["url"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
+    qdrant["api_key"] = os.environ.get("QDRANT_API_KEY", "")
+
     return config
 
 
