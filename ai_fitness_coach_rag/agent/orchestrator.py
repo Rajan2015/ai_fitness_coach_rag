@@ -12,6 +12,7 @@ execute and resumes on the user's next YES/NO reply (`Command(resume=...)`)
 from __future__ import annotations
 
 import asyncio
+import json
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
@@ -43,6 +44,10 @@ SYSTEM_PROMPT = get_prompt("fitness_coach_system")
 
 CONFIRM_YES = {"yes", "y", "confirm", "ok", "okay", "sure", "yep", "yeah"}
 CONFIRM_NO = {"no", "n", "cancel", "nope", "discard"}
+
+# Exit strategy: after this many unrecognized replies, auto-cancel the pending log
+# instead of looping forever waiting for a clear YES/NO.
+MAX_CONFIRM_RETRIES = 2
 
 
 def _handle_onboarding(user_id: str, text: str) -> tuple[str | None, str | None]:
@@ -78,18 +83,22 @@ def _handle_onboarding(user_id: str, text: str) -> tuple[str | None, str | None]
         session.close()
 
 
-def _parse_decision(text: str) -> dict:
-    """Map a free-text YES/NO reply to a HumanInTheLoopMiddleware decision."""
+def _parse_decision(text: str) -> dict | None:
+    """Map a free-text reply to a HumanInTheLoopMiddleware decision.
+
+    Returns None when the reply is neither a clear YES nor a clear NO, so the
+    caller can re-prompt instead of guessing.
+    """
     normalized = text.strip().lower()
     if normalized in CONFIRM_YES:
         return {"type": "approve"}
     if normalized in CONFIRM_NO:
         return {"type": "reject", "message": "User declined to log this."}
-    return {"type": "reject", "message": f"User replied: {text}"}
+    return None
 
 
 def _format_interrupt(interrupts) -> str:
-    """Render the paused tool-call(s) as a human-readable confirmation prompt."""
+    """Render the paused tool-call(s) as a plain-text confirmation prompt (LLM fallback)."""
     lines = []
     for item in interrupts:
         for action in item.value.get("action_requests", []):
@@ -103,6 +112,7 @@ class AgentOrchestrator:
     def __init__(self) -> None:
         self._agent = None
         self._agent_loop: asyncio.AbstractEventLoop | None = None
+        self._confirm_retries: dict[str, int] = {}
 
     async def _get_agent(self):
         """Create the LangChain agent once for the active event loop."""
@@ -134,6 +144,22 @@ class AgentOrchestrator:
                 return task.interrupts
         return None
 
+    async def _natural_language_confirm(self, interrupts) -> str:
+        """Ask the LLM to phrase the pending tool-call(s) as a natural-language question."""
+        action_requests = [
+            action
+            for item in interrupts
+            for action in item.value.get("action_requests", [])
+        ]
+        llm = get_llm("confirm")
+        prompt = get_prompt("confirm_pending_action", actions=json.dumps(action_requests))
+        try:
+            response = await llm.ainvoke(prompt)
+            text = (getattr(response, "content", None) or str(response)).strip()
+        except Exception:
+            text = ""
+        return text or _format_interrupt(interrupts)
+
     async def handle_message(self, user_id: str, text: str) -> str:
         onboarding_reply, _ = _handle_onboarding(user_id, text)
         if onboarding_reply is not None:
@@ -146,6 +172,23 @@ class AgentOrchestrator:
         if pending:
             action_count = len(pending[0].value.get("action_requests", []))
             decision = _parse_decision(text)
+
+            if decision is None:
+                retries = self._confirm_retries.get(user_id, 0) + 1
+                if retries > MAX_CONFIRM_RETRIES:
+                    # Exit strategy: give up waiting for a clear answer and cancel the log.
+                    self._confirm_retries.pop(user_id, None)
+                    decision = {
+                        "type": "reject",
+                        "message": f"No clear confirmation after {MAX_CONFIRM_RETRIES} attempts; cancelled.",
+                    }
+                else:
+                    self._confirm_retries[user_id] = retries
+                    prompt = await self._natural_language_confirm(pending)
+                    return f"Sorry, I didn't catch that. {prompt}"
+            else:
+                self._confirm_retries.pop(user_id, None)
+
             result = await agent.ainvoke(
                 Command(resume=[decision] * action_count), config=config
             )
@@ -156,7 +199,7 @@ class AgentOrchestrator:
 
         new_interrupts = result.get("__interrupt__")
         if new_interrupts:
-            return _format_interrupt(new_interrupts)
+            return await self._natural_language_confirm(new_interrupts)
         return result["messages"][-1].content
 
     async def get_state(self, user_id: str) -> ConversationState:

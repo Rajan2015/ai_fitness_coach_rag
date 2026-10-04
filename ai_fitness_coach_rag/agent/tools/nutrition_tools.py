@@ -59,6 +59,7 @@ def _store() -> QdrantVectorStore:
     ]
     return QdrantVectorStore.from_documents(
         documents,
+        embedding=None,
         sparse_embedding=sparse_embeddings,
         url=url,
         api_key=api_key,
