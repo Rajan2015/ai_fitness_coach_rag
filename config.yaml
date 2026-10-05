@@ -33,7 +33,7 @@ llm:
   models:
     default: gpt-4o-mini
     confirm: gpt-4o-mini
-  stt_model: whisper-1
+  stt_translate_model: whisper-1   # OpenAI's translation endpoint only supports whisper-1 today
 
 
 embeddings:

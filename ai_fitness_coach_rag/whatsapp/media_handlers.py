@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from ai_fitness_coach_rag.llm.factory import get_stt, get_stt_model
+from ai_fitness_coach_rag.llm.factory import get_stt, get_stt_translate_model
 from ai_fitness_coach_rag.observability.logger import get_logger
 from ai_fitness_coach_rag.whatsapp.twilio_client import get_twilio_client
 
@@ -18,17 +18,17 @@ logger = get_logger(__name__)
 MediaHandler = Callable[[str, str], Awaitable[str | None]]
 
 
-def _transcribe(client: Any, model: str, audio_bytes: bytes, content_type: str) -> str:
+def _translate_to_english(client: Any, audio_bytes: bytes, content_type: str) -> str:
     extension = content_type.split("/")[-1].split(";")[0] or "ogg"
-    response = client.audio.transcriptions.create(
-        model=model,
+    response = client.audio.translations.create(
+        model=get_stt_translate_model(),
         file=(f"voice.{extension}", audio_bytes, content_type),
     )
     return response.text
 
 
 async def handle_voice_note(media_url: str, content_type: str) -> str | None:
-    """Download and transcribe a WhatsApp voice note."""
+    """Download a WhatsApp voice note and translate it (any language) to English text."""
     try:
         audio_bytes = get_twilio_client().download_media(media_url)
     except Exception:
@@ -41,7 +41,7 @@ async def handle_voice_note(media_url: str, content_type: str) -> str | None:
         return None
 
     try:
-        transcript = _transcribe(client, get_stt_model(), audio_bytes, content_type)
+        transcript = _translate_to_english(client, audio_bytes, content_type)
     except Exception:
         logger.exception("Failed to transcribe voice note")
         return None
