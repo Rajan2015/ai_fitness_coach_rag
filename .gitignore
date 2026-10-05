@@ -26,5 +26,6 @@ venv/
 .deepeval_telemetry.txt
 ngrok.yml
 
-
-**/data/*
+# memory
+.fitness_coach/
+data/**

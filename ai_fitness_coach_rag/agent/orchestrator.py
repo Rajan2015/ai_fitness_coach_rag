@@ -123,7 +123,13 @@ class AgentOrchestrator:
         if self._agent is None or self._agent_loop is not loop:
             self._agent = create_agent(
                 model=get_llm(),
-                tools=[lookup_nutrition, log_food, log_workout, log_metric, get_fitness_logs],
+                tools=[
+                    lookup_nutrition,
+                    log_food,
+                    log_workout,
+                    log_metric,
+                    get_fitness_logs,
+                ],
                 system_prompt=SYSTEM_PROMPT,
                 middleware=[
                     get_summarization_middleware(),
@@ -155,7 +161,9 @@ class AgentOrchestrator:
             for action in item.value.get("action_requests", [])
         ]
         llm = get_llm("confirm")
-        prompt = get_prompt("confirm_pending_action", actions=json.dumps(action_requests))
+        prompt = get_prompt(
+            "confirm_pending_action", actions=json.dumps(action_requests)
+        )
         try:
             response = await llm.ainvoke(prompt)
             text = (getattr(response, "content", None) or str(response)).strip()
@@ -192,8 +200,10 @@ class AgentOrchestrator:
             else:
                 self._confirm_retries.pop(user_id, None)
 
+            resume_value = {"decisions": [decision] * action_count}
             result = await agent.ainvoke(
-                Command(resume=[decision] * action_count), config=config
+                Command(resume={pending[0].id: resume_value}),
+                config=config,
             )
         else:
             result = await agent.ainvoke(
