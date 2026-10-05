@@ -14,6 +14,7 @@ from twilio.request_validator import RequestValidator
 from ai_fitness_coach_rag.agent.factory import get_orchestrator
 from ai_fitness_coach_rag.config import config
 from ai_fitness_coach_rag.observability.logger import get_logger
+from ai_fitness_coach_rag.whatsapp.media_handlers import get_media_handler
 from ai_fitness_coach_rag.whatsapp.twilio_client import get_twilio_client
 
 logger = get_logger(__name__)
@@ -119,7 +120,18 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
 async def _build_reply_async(message: InboundMessage) -> str:
     """Route a message through the active agent orchestrator."""
     if message.is_media:
-        return "Thanks, I received your attachment. Processing it is coming soon!"
+        content_type = message.media_content_types[0] if message.media_content_types else ""
+        handler = get_media_handler(content_type)
+        if handler is None:
+            return "Thanks, I received your attachment. Processing it is coming soon!"
+
+        transcript = await handler(message.media_urls[0], content_type)
+        if not transcript:
+            return "Sorry, I couldn't process that voice note. Could you try again or type it?"
+
+        orchestrator = get_orchestrator()
+        return await orchestrator.handle_message(message.from_number, transcript)
+
     if not message.body.strip():
         return "Sorry, I didn't catch a message. Could you try again?"
 

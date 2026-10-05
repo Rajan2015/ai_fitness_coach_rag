@@ -63,3 +63,20 @@ def get_llm(flow: str | None = None) -> _FallbackLLM | Any:
             return _FallbackLLM(flow=flow)
 
     return _FallbackLLM(flow=flow)
+
+
+def get_stt_model() -> str:
+    """Resolve the configured STT model name (overridable via STT_MODEL env var)."""
+    llm_config = config.get("llm", {})
+    return os.getenv("STT_MODEL") or llm_config.get("stt_model") or "whisper-1"
+
+
+def get_stt() -> Any | None:
+    """Return a configured OpenAI client for transcription, or None if no API key is set."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    from openai import OpenAI
+
+    return OpenAI(api_key=api_key)

@@ -33,6 +33,7 @@ llm:
   models:
     default: gpt-4o-mini
     confirm: gpt-4o-mini
+  stt_model: whisper-1
 
 
 embeddings:

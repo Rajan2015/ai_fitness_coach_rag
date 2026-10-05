@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import requests
 from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
 
@@ -23,10 +24,10 @@ class TwilioClient:
 
     def __init__(self, client: Client | None = None) -> None:
         twilio_settings = config["twilio"]
+        self._account_sid = twilio_settings["account_sid"]
+        self._auth_token = twilio_settings["auth_token"]
         self._from_number = _whatsapp_address(twilio_settings["whatsapp_number"])
-        self._client = client or Client(
-            twilio_settings["account_sid"], twilio_settings["auth_token"]
-        )
+        self._client = client or Client(self._account_sid, self._auth_token)
 
     def send_text(self, to: str, body: str) -> str:
         """Send a plain text WhatsApp message. Returns the Twilio MessageSid."""
@@ -54,6 +55,14 @@ class TwilioClient:
             logger.exception("Failed to send WhatsApp media message to %s", to)
             raise
         return message.sid
+
+    def download_media(self, media_url: str) -> bytes:
+        """Download a Twilio media attachment, which requires account auth to fetch."""
+        response = requests.get(
+            media_url, auth=(self._account_sid, self._auth_token), timeout=30
+        )
+        response.raise_for_status()
+        return response.content
 
 
 @lru_cache(maxsize=1)
