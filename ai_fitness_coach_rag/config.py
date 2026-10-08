@@ -45,6 +45,11 @@ def load_config() -> dict:
 
     redis_config = config.setdefault("redis", {})
     redis_config["url"] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    redis_config.setdefault("otp_ttl_seconds", 300)
+    redis_config.setdefault("otp_length", 6)
+    redis_config.setdefault("max_sends_per_window", 5)
+    redis_config.setdefault("send_window_seconds", 900)
+    redis_config.setdefault("max_verify_attempts", 5)
 
     return config
 

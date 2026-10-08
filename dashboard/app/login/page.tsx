@@ -100,7 +100,7 @@ export default function LoginPage() {
             </h2>
             <p className="mt-4 max-w-sm text-base leading-7 text-slate-500">
               {step === "phone"
-                ? "Use the WhatsApp number you used when you joined FitChat."
+                ? "Use the WhatsApp number you used when you joined FitChat (e.g. +91 98765 43210)."
                 : `We sent a six-digit code to ${phoneNumber}.`}
             </p>
 
@@ -112,7 +112,7 @@ export default function LoginPage() {
                     type="tel"
                     required
                     autoComplete="tel"
-                    placeholder="+1 555 555 5555"
+                    placeholder="+91 99XXX XXXXX"
                     value={phoneNumber}
                     onChange={(e) => setPhoneNumber(e.target.value)}
                     className="mt-2 w-full border border-slate-300 bg-slate-50 px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand focus:bg-white focus:ring-2 focus:ring-brand/15"

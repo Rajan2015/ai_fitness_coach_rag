@@ -12,19 +12,34 @@ from sqlalchemy.orm import Session
 from ai_fitness_coach_rag.db.models import GoalType, Sex, User
 
 
+def normalize_phone_number(phone_number: str) -> str:
+    """Canonicalize any input (whatsapp: scheme, spacing, trunk 0, bare 10-digit) to +91XXXXXXXXXX."""
+    digits = re.sub(r"\D", "", phone_number)
+    if digits.startswith("91") and len(digits) == 12:
+        national = digits[2:]
+    elif digits.startswith("0") and len(digits) == 11:
+        national = digits[1:]
+    elif len(digits) == 10:
+        national = digits
+    else:
+        raise ValueError(f"Unsupported Indian phone number: {phone_number!r}")
+    return f"+91{national}"
+
+
 def hash_phone(phone_number: str) -> str:
-    """Stable, non-reversible user id derived from the raw phone number."""
-    return hashlib.sha256(phone_number.strip().encode("utf-8")).hexdigest()
+    """Stable, non-reversible user id derived from the normalized phone number."""
+    return hashlib.sha256(normalize_phone_number(phone_number).encode("utf-8")).hexdigest()
 
 
 def get_or_create_user(session: Session, phone_number: str) -> tuple[User, bool]:
     """Return the user for this phone number, creating a blank profile if new."""
-    phone_hash = hash_phone(phone_number)
+    normalized = normalize_phone_number(phone_number)
+    phone_hash = hash_phone(normalized)
     user = session.query(User).filter_by(phone_hash=phone_hash).one_or_none()
     if user is not None:
         return user, False
 
-    user = User(phone_hash=phone_hash, phone_number=phone_number)
+    user = User(phone_hash=phone_hash, phone_number=normalized)
     session.add(user)
     session.commit()
     session.refresh(user)

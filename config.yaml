@@ -4,6 +4,13 @@ log_level: INFO
 twilio:
   validate_signature: true
 
+redis:
+  otp_ttl_seconds: 300
+  otp_length: 6
+  max_sends_per_window: 5
+  send_window_seconds: 900
+  max_verify_attempts: 5
+
 database: {}  # url comes from DATABASE_URL env var (Neon Postgres connection string)
 
 qdrant:

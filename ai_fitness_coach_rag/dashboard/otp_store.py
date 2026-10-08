@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import redis
 
-from ai_fitness_coach_rag.agent.tools.onboarding_tools import hash_phone
+from ai_fitness_coach_rag.agent.tools.onboarding_tools import hash_phone, normalize_phone_number
 from ai_fitness_coach_rag.config import config
 from ai_fitness_coach_rag.db.models import User
 from ai_fitness_coach_rag.db.session import SessionLocal
@@ -16,11 +16,11 @@ from ai_fitness_coach_rag.whatsapp.twilio_client import get_twilio_client
 
 logger = get_logger(__name__)
 
-_OTP_TTL_SECONDS = 300
-_OTP_LENGTH = 6
-_MAX_SENDS_PER_WINDOW = 5
-_SEND_WINDOW_SECONDS = 900
-_MAX_VERIFY_ATTEMPTS = 5
+_OTP_TTL_SECONDS = config["redis"]["otp_ttl_seconds"]
+_OTP_LENGTH = config["redis"]["otp_length"]
+_MAX_SENDS_PER_WINDOW = config["redis"]["max_sends_per_window"]
+_SEND_WINDOW_SECONDS = config["redis"]["send_window_seconds"]
+_MAX_VERIFY_ATTEMPTS = config["redis"]["max_verify_attempts"]
 
 
 class OtpRateLimitError(Exception):
@@ -47,7 +47,12 @@ def _send_count_key(phone_hash: str) -> str:
 def generate_and_send_otp(phone_number: str, redis_client: redis.Redis | None = None) -> None:
     """Text a one-time code to an already-onboarded WhatsApp user; silently no-ops for unknown numbers."""
     client = redis_client or get_redis_client()
-    phone_hash = hash_phone(phone_number)
+    try:
+        normalized = normalize_phone_number(phone_number)
+    except ValueError:
+        logger.info("OTP requested for a malformed phone number")
+        return
+    phone_hash = hash_phone(normalized)
 
     send_key = _send_count_key(phone_hash)
     sends = client.incr(send_key)
@@ -71,7 +76,7 @@ def generate_and_send_otp(phone_number: str, redis_client: redis.Redis | None = 
     client.delete(_attempts_key(phone_hash))
 
     get_twilio_client().send_text(
-        phone_number,
+        normalized,
         f"Your fitness coach dashboard login code is {code}. It expires in 5 minutes.",
     )
 
@@ -81,7 +86,10 @@ def verify_otp(
 ) -> dict | None:
     """Check a submitted code against the stored OTP; returns basic user info on success."""
     client = redis_client or get_redis_client()
-    phone_hash = hash_phone(phone_number)
+    try:
+        phone_hash = hash_phone(phone_number)
+    except ValueError:
+        return None
 
     attempts_key = _attempts_key(phone_hash)
     attempts = client.incr(attempts_key)

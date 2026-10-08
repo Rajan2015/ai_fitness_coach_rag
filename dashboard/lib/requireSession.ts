@@ -5,9 +5,24 @@ import { redirect } from "next/navigation";
 import { authOptions } from "./auth";
 import { getUserByPhoneHash, type DashboardUser } from "./queries";
 
-// Must match ai_fitness_coach_rag/agent/tools/onboarding_tools.py::hash_phone.
+// Must match ai_fitness_coach_rag/agent/tools/onboarding_tools.py::normalize_phone_number/hash_phone.
+function normalizePhoneNumber(phoneNumber: string): string {
+  const digits = phoneNumber.replace(/\D/g, "");
+  let national: string;
+  if (digits.startsWith("91") && digits.length === 12) {
+    national = digits.slice(2);
+  } else if (digits.startsWith("0") && digits.length === 11) {
+    national = digits.slice(1);
+  } else if (digits.length === 10) {
+    national = digits;
+  } else {
+    throw new Error(`Unsupported Indian phone number: ${phoneNumber}`);
+  }
+  return `+91${national}`;
+}
+
 function hashPhone(phoneNumber: string): string {
-  return createHash("sha256").update(phoneNumber.trim()).digest("hex");
+  return createHash("sha256").update(normalizePhoneNumber(phoneNumber)).digest("hex");
 }
 
 /** Resolves the logged-in NextAuth session to the user's DB row, scoping all reads. */

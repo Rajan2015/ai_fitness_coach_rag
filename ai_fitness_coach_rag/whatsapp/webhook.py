@@ -12,6 +12,7 @@ from fastapi.responses import PlainTextResponse
 from twilio.request_validator import RequestValidator
 
 from ai_fitness_coach_rag.agent.factory import get_orchestrator
+from ai_fitness_coach_rag.agent.tools.onboarding_tools import normalize_phone_number
 from ai_fitness_coach_rag.config import config
 from ai_fitness_coach_rag.observability.logger import get_logger
 from ai_fitness_coach_rag.whatsapp.media_handlers import get_media_handler
@@ -106,9 +107,10 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
         for i in range(num_media)
         if f"MediaContentType{i}" in form_params
     ]
+    raw_from = form_params.get("From", "")
     return InboundMessage(
         message_sid=form_params.get("MessageSid", ""),
-        from_number=form_params.get("From", ""),
+        from_number=normalize_phone_number(raw_from) if raw_from else raw_from,
         to_number=form_params.get("To", ""),
         body=form_params.get("Body", ""),
         num_media=num_media,
