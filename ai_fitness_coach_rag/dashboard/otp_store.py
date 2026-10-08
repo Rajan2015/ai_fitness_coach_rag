@@ -7,7 +7,10 @@ from functools import lru_cache
 
 import redis
 
-from ai_fitness_coach_rag.agent.tools.onboarding_tools import hash_phone, normalize_phone_number
+from ai_fitness_coach_rag.agent.tools.onboarding_tools import (
+    hash_phone,
+    normalize_phone_number,
+)
 from ai_fitness_coach_rag.config import config
 from ai_fitness_coach_rag.db.models import User
 from ai_fitness_coach_rag.db.session import SessionLocal
@@ -29,7 +32,13 @@ class OtpRateLimitError(Exception):
 
 @lru_cache(maxsize=1)
 def get_redis_client() -> redis.Redis:
-    return redis.Redis.from_url(config["redis"]["url"], decode_responses=True)
+    return redis.Redis(
+        host="pin-observant-affable-25180.db.redis.io",
+        port=18173,
+        decode_responses=True,
+        username="default",
+        password="R62Hk5oDtdsQ5uoQ6kHzW1Zgwf2Oq30Q",
+    )
 
 
 def _otp_key(phone_hash: str) -> str:
@@ -44,22 +53,27 @@ def _send_count_key(phone_hash: str) -> str:
     return f"dashboard:otp:sends:{phone_hash}"
 
 
-def generate_and_send_otp(phone_number: str, redis_client: redis.Redis | None = None) -> None:
+def generate_and_send_otp(
+    phone_number: str, redis_client: redis.Redis | None = None
+) -> None:
     """Text a one-time code to an already-onboarded WhatsApp user; silently no-ops for unknown numbers."""
     client = redis_client or get_redis_client()
-    try:
-        normalized = normalize_phone_number(phone_number)
-    except ValueError:
-        logger.info("OTP requested for a malformed phone number")
-        return
-    phone_hash = hash_phone(normalized)
+    # try:
+    #     normalized = normalize_phone_number(phone_number)
+    #     print(normalized)
+    # except ValueError:
+    #     logger.info("OTP requested for a malformed phone number")
+    #     return
+    phone_hash = hash_phone(phone_number)
 
     send_key = _send_count_key(phone_hash)
     sends = client.incr(send_key)
     if sends == 1:
         client.expire(send_key, _SEND_WINDOW_SECONDS)
     if sends > _MAX_SENDS_PER_WINDOW:
-        raise OtpRateLimitError("Too many OTP requests for this number, try again later.")
+        raise OtpRateLimitError(
+            "Too many OTP requests for this number, try again later."
+        )
 
     session = SessionLocal()
     try:
@@ -75,8 +89,10 @@ def generate_and_send_otp(phone_number: str, redis_client: redis.Redis | None = 
     client.set(_otp_key(phone_hash), code, ex=_OTP_TTL_SECONDS)
     client.delete(_attempts_key(phone_hash))
 
+    phone_number = normalize_phone_number(phone_number)
+    print(phone_number, "OTP", code, "sent to user", user.name)
     get_twilio_client().send_text(
-        normalized,
+        f"whatsapp:{phone_number}",
         f"Your fitness coach dashboard login code is {code}. It expires in 5 minutes.",
     )
 
