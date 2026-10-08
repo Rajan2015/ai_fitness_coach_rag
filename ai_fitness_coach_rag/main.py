@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from ai_fitness_coach_rag.agent.tools.nutrition_tools import (
     ensure_nutrition_collection_indexed,
 )
+from ai_fitness_coach_rag.dashboard.auth_router import router as dashboard_auth_router
 from ai_fitness_coach_rag.db.session import initialize_database
+from ai_fitness_coach_rag.config import config
+from ai_fitness_coach_rag.jobs.score_worker import ScoreWorker
 from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 
 
@@ -17,10 +22,24 @@ from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 async def lifespan(_: FastAPI):
     initialize_database()
     ensure_nutrition_collection_indexed()
-    yield
+    worker = ScoreWorker(
+        float(config.get("scoring", {}).get("worker_interval_seconds", 3600))
+    )
+    worker.start()
+    try:
+        yield
+    finally:
+        worker.stop()
 
 
 app = FastAPI(title="AI Fitness Coach", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ.get("DASHBOARD_WEB_ORIGIN", "http://localhost:3000")],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.get("/health")
@@ -30,6 +49,7 @@ def health() -> dict[str, str]:
 
 
 app.include_router(whatsapp_router)
+app.include_router(dashboard_auth_router)
 
 
 def run() -> None:

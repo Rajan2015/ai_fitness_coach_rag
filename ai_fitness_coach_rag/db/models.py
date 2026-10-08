@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import datetime
 import enum
+from functools import partial
 
-from sqlalchemy import Enum as SAEnum
+from sqlalchemy import Enum as _Enum
 from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Store enums as plain VARCHAR under Postgres too (skip native CREATE TYPE DDL).
+SAEnum = partial(_Enum, native_enum=False)
 
 
 class Base(DeclarativeBase):

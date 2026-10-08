@@ -35,14 +35,16 @@ def load_config() -> dict:
     config["log_level"] = os.environ.get("LOG_LEVEL", config.get("log_level", "INFO"))
 
     database = config.setdefault("database", {})
-    database["path"] = os.environ.get(
-        "DATABASE_PATH", database.get("path", "./data/fitness_coach.db")
-    )
+    # Secrets never live in config.yaml — always sourced from the environment.
+    database["url"] = os.environ.get("DATABASE_URL", "")
 
     qdrant = config.setdefault("qdrant", {})
     # Secrets never live in config.yaml — always sourced from the environment.
     qdrant["url"] = os.environ.get("QDRANT_URL", "http://localhost:6333")
     qdrant["api_key"] = os.environ.get("QDRANT_API_KEY", "")
+
+    redis_config = config.setdefault("redis", {})
+    redis_config["url"] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
     return config
 

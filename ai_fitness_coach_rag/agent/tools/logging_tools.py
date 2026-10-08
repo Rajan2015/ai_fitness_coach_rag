@@ -9,7 +9,6 @@ the LangGraph `AsyncSqliteSaver` checkpointer. No separate pending-state table.
 
 from __future__ import annotations
 
-import datetime
 from typing import Annotated, Literal
 
 from langchain_core.tools import tool
@@ -17,13 +16,36 @@ from langgraph.config import get_config
 from pydantic import BaseModel, Field
 
 from ai_fitness_coach_rag.agent.tools.onboarding_tools import get_or_create_user
-from ai_fitness_coach_rag.db.models import DailyLog, EntrySource, LogType
+from ai_fitness_coach_rag.db.models import DailyLog, EntrySource, LogType, Score, User
+from ai_fitness_coach_rag.db.score_service import (
+    daily_targets,
+    upsert_daily_score,
+    user_local_date,
+)
 from ai_fitness_coach_rag.db.session import SessionLocal
 
 
 def _current_user_id() -> str:
     """Thread id == hashed-phone user id, set by orchestrator's thread_config()."""
     return get_config()["configurable"]["thread_id"]
+
+
+def _score_message(prefix: str, score: Score, user: User) -> str:
+    """Return deterministic score facts for the agent to explain to the user."""
+    maintenance_calories, protein_target = daily_targets(user)
+    target_message = ""
+    if maintenance_calories is not None and protein_target is not None:
+        target_message = (
+            f" Targets: maintenance calories {maintenance_calories:.0f} kcal/day, "
+            f"protein {protein_target:.0f} g/day."
+        )
+    return (
+        f"{prefix} Daily score: {score.overall_score:.1f}/100. "
+        f"Breakdown: calories {score.calorie_score:.1f}, "
+        f"protein {score.protein_score:.1f}, activity {score.activity_score:.1f}, "
+        f"water {score.water_score:.1f}, consistency {score.consistency_score:.1f}."
+        f"{target_message}"
+    )
 
 
 class FoodLogEntry(BaseModel):
@@ -48,7 +70,7 @@ def log_food(entries: list[FoodLogEntry]) -> str:
     session = SessionLocal()
     try:
         user, _ = get_or_create_user(session, _current_user_id())
-        today = datetime.date.today()
+        today = user_local_date(user)
         for entry in entries:
             session.add(
                 DailyLog(
@@ -64,8 +86,9 @@ def log_food(entries: list[FoodLogEntry]) -> str:
                     source=EntrySource(entry.source),
                 )
             )
+        score = upsert_daily_score(session, user, today)
         session.commit()
-        return f"Logged {len(entries)} food item(s)."
+        return _score_message(f"Logged {len(entries)} food item(s).", score, user)
     finally:
         session.close()
 
@@ -95,19 +118,21 @@ def log_workout(
     session = SessionLocal()
     try:
         user, _ = get_or_create_user(session, _current_user_id())
+        today = user_local_date(user)
         session.add(
             DailyLog(
                 user_id=user.id,
                 log_type=LogType.WORKOUT,
-                log_date=datetime.date.today(),
+                log_date=today,
                 description=activity,
                 duration_minutes=duration_minutes,
                 calories_burned=calories_burned,
                 source=EntrySource.USER_REPORTED,
             )
         )
+        score = upsert_daily_score(session, user, today)
         session.commit()
-        return f"Logged workout: {activity}."
+        return _score_message(f"Logged workout: {activity}.", score, user)
     finally:
         session.close()
 
@@ -134,7 +159,7 @@ def log_metric(
     session = SessionLocal()
     try:
         user, _ = get_or_create_user(session, _current_user_id())
-        today = datetime.date.today()
+        today = user_local_date(user)
         name = metric_name.strip().lower()
         if name == "water":
             session.add(
@@ -157,8 +182,11 @@ def log_metric(
                     source=EntrySource.USER_REPORTED,
                 )
             )
+        score = upsert_daily_score(session, user, today)
         session.commit()
-        return f"Logged metric: {name}={value}{unit or ''}."
+        return _score_message(
+            f"Logged metric: {name}={value}{unit or ''}.", score, user
+        )
     finally:
         session.close()
 

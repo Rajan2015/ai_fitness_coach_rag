@@ -4,8 +4,7 @@ log_level: INFO
 twilio:
   validate_signature: true
 
-database:
-  path: ".fitness_coach/data/fitness_coach.db"
+database: {}  # url comes from DATABASE_URL env var (Neon Postgres connection string)
 
 qdrant:
   nutrition_collection: "nutrition_facts"
@@ -24,6 +23,7 @@ scoring:
   steps_target: 10000
   water_target_ml: 2500
   consistency_window_days: 7
+  worker_interval_seconds: 3600
 
 
 llm:
