@@ -107,10 +107,9 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
         for i in range(num_media)
         if f"MediaContentType{i}" in form_params
     ]
-    raw_from = form_params.get("From", "")
     return InboundMessage(
         message_sid=form_params.get("MessageSid", ""),
-        from_number=normalize_phone_number(raw_from) if raw_from else raw_from,
+        from_number=form_params.get("From", ""),
         to_number=form_params.get("To", ""),
         body=form_params.get("Body", ""),
         num_media=num_media,
@@ -122,7 +121,9 @@ def _parse_inbound_message(form_params: dict[str, str]) -> InboundMessage:
 async def _build_reply_async(message: InboundMessage) -> str:
     """Route a message through the active agent orchestrator."""
     if message.is_media:
-        content_type = message.media_content_types[0] if message.media_content_types else ""
+        content_type = (
+            message.media_content_types[0] if message.media_content_types else ""
+        )
         handler = get_media_handler(content_type)
         if handler is None:
             return "Thanks, I received your attachment. Processing it is coming soon!"
