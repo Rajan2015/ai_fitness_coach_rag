@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 models: User, DailyLog, DeviceMetric, Score, Plan, ConversationLog."""
+"""SQLAlchemy 2.0 models for the coach data layer."""
 
 from __future__ import annotations
 
@@ -6,12 +6,14 @@ import datetime
 import enum
 from functools import partial
 
-from sqlalchemy import Enum as _Enum
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import CheckConstraint, Enum as _Enum
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Store enums as plain VARCHAR under Postgres too (skip native CREATE TYPE DDL).
 SAEnum = partial(_Enum, native_enum=False)
+JSONDocument = JSON().with_variant(JSONB(), "postgresql")
 
 
 class Base(DeclarativeBase):
@@ -54,6 +56,12 @@ class EntrySource(str, enum.Enum):
 class PlanType(str, enum.Enum):
     MEAL = "meal"
     WORKOUT = "workout"
+
+
+class WorkoutPlanStatus(str, enum.Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
 
 
 class Direction(str, enum.Enum):
@@ -186,6 +194,72 @@ class Plan(Base):
     plan_type: Mapped[PlanType] = mapped_column(SAEnum(PlanType))
     content: Mapped[str] = mapped_column(Text)
 
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_utcnow)
+
+
+class WorkoutProfile(Base):
+    """Workout preferences collected separately from the core onboarding profile."""
+
+    __tablename__ = "workout_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "training_experience IN ('beginner', 'intermediate', 'advanced')",
+            name="ck_workout_profiles_training_experience",
+        ),
+        CheckConstraint(
+            "workout_days_per_week BETWEEN 1 AND 7",
+            name="ck_workout_profiles_days_per_week",
+        ),
+        CheckConstraint(
+            "session_duration_minutes > 0",
+            name="ck_workout_profiles_session_duration_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), unique=True, index=True
+    )
+    # Nullable so the conversational flow can persist partial answers across
+    # turns (same pattern as the nullable onboarding fields on User), even
+    # though a *complete* profile always has every one of these set.
+    training_experience: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    equipment: Mapped[list[str]] = mapped_column(JSONDocument, default=list)
+    workout_days_per_week: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    session_duration_minutes: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    preferences: Mapped[list[str]] = mapped_column(JSONDocument, default=list)
+    injuries_or_limitations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        default=_utcnow, onupdate=_utcnow
+    )
+
+
+class WorkoutPlan(Base):
+    """Validated workout-plan JSON approved by a user."""
+
+    __tablename__ = "workout_plans"
+    __table_args__ = (
+        Index("ix_workout_plans_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[WorkoutPlanStatus] = mapped_column(
+        SAEnum(WorkoutPlanStatus), default=WorkoutPlanStatus.DRAFT
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    goal_type: Mapped[GoalType] = mapped_column(SAEnum(GoalType))
+    plan_json: Mapped[dict] = mapped_column(JSONDocument)
+    profile_snapshot_json: Mapped[dict] = mapped_column(JSONDocument)
+    approved_at: Mapped[datetime.datetime | None] = mapped_column(
+        nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(default=_utcnow)
 
 

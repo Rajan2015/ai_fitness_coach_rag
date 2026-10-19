@@ -34,6 +34,14 @@ from ai_fitness_coach_rag.agent.tools.onboarding_tools import (
     next_onboarding_slot,
     onboarding_welcome_message,
 )
+from ai_fitness_coach_rag.agent.tools.plan_tools import (
+    build_workout_plan_draft,
+    get_workout_profile_gaps,
+    save_workout_plan,
+    save_workout_profile_answer,
+    search_exercise_options,
+    validate_workout_plan,
+)
 from ai_fitness_coach_rag.agent.prompts import get_prompt
 from ai_fitness_coach_rag.db.session import SessionLocal
 from ai_fitness_coach_rag.llm.factory import get_llm
@@ -129,6 +137,12 @@ class AgentOrchestrator:
                     log_workout,
                     log_metric,
                     get_fitness_logs,
+                    get_workout_profile_gaps,
+                    save_workout_profile_answer,
+                    search_exercise_options,
+                    build_workout_plan_draft,
+                    validate_workout_plan,
+                    save_workout_plan,
                 ],
                 system_prompt=SYSTEM_PROMPT,
                 middleware=[
@@ -138,6 +152,7 @@ class AgentOrchestrator:
                             "log_food": True,
                             "log_workout": True,
                             "log_metric": True,
+                            "save_workout_plan": True,
                         }
                     ),
                 ],

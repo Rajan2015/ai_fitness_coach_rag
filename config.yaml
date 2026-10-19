@@ -16,6 +16,7 @@ database: {}  # url comes from DATABASE_URL env var (Neon Postgres connection st
 qdrant:
   nutrition_collection: "nutrition_facts"
   nutrition_model: "qdrant/bm25"
+  exercise_collection: "exercise_knowledge"
   final_candidates: 3
 
 scoring:
@@ -40,6 +41,7 @@ llm:
   models:
     default: gpt-4o-mini
     confirm: gpt-4o-mini
+    workout_plan: gpt-4o-mini
   stt_translate_model: whisper-1   # OpenAI's translation endpoint only supports whisper-1 today
 
 
