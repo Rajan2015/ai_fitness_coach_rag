@@ -37,6 +37,10 @@ from ai_fitness_coach_rag.context.workout_plan.shortlist import (
     ExerciseShortlist,
     build_exercise_shortlist,
 )
+from ai_fitness_coach_rag.context.workout_plan.query_rewriter import (
+    WorkoutRetrievalSpec,
+    rewrite_workout_query,
+)
 from ai_fitness_coach_rag.context.workout_plan.validator import (
     ValidationResult,
     validate_workout_plan as _validate_workout_plan,
@@ -411,6 +415,7 @@ def _shortlist_prompt_section(shortlist: ExerciseShortlist) -> str:
 def _draft_prompt(
     profile: WorkoutProfile,
     shortlist: ExerciseShortlist,
+    retrieval_spec: WorkoutRetrievalSpec,
     retry_errors: tuple[str, ...],
 ) -> str:
     base = (
@@ -426,6 +431,15 @@ def _draft_prompt(
         "come from the main-set options. The safety_note must restate any "
         "reported injuries/limitations verbatim and recommend a qualified "
         "professional; never silently work around them.\n\n"
+        "Use these semantic retrieval queries as relevance guidance only. "
+        "They do not change the hard profile and catalog constraints:\n"
+        f"- Warm-up: {retrieval_spec.warm_up_query}\n"
+        f"- Cool-down: {retrieval_spec.cool_down_query}\n"
+        + "\n".join(
+            f"- {pattern}: {query}"
+            for pattern, query in retrieval_spec.main_queries.items()
+        )
+        + f"\n- Soft terms: {', '.join(retrieval_spec.soft_terms) or 'none'}\n\n"
         f"{_shortlist_prompt_section(shortlist)}"
     )
     if retry_errors:
@@ -447,9 +461,11 @@ def _validate_plan_dict(
 
 
 @tool
-def build_workout_plan_draft() -> dict[str, Any]:
+def build_workout_plan_draft(user_request: str) -> dict[str, Any]:
     """Generate a structured workout-plan draft for the user's saved profile.
     Only call this once get_workout_profile_gaps reports complete=True. The
+    user_request must be the complete workout-plan request from the current
+    user message, so semantic retrieval can reflect the requested intent.
     exercise choices are schema-constrained to a safe, equipment-compatible
     shortlist and re-checked by a deterministic validator; present the
     returned plan (or its errors) to the user rather than editing it yourself.
@@ -473,12 +489,18 @@ def build_workout_plan_draft() -> dict[str, Any]:
             }
 
         schema = build_plan_schema(shortlist)
+        retrieval_spec = rewrite_workout_query(user_request, profile)
         structured_llm = get_llm("workout_plan").with_structured_output(schema)
 
         plan: dict[str, Any] = {}
         errors: tuple[str, ...] = ()
         for attempt in range(_MAX_DRAFT_ATTEMPTS):
-            prompt = _draft_prompt(profile, shortlist, errors if attempt else ())
+            prompt = _draft_prompt(
+                profile,
+                shortlist,
+                retrieval_spec,
+                errors if attempt else (),
+            )
             try:
                 draft = structured_llm.invoke(prompt)
             except Exception as exc:  # LLM/provider error
