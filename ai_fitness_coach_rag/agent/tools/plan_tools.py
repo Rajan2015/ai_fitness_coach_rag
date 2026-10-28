@@ -398,9 +398,7 @@ def search_exercise_options(
     try:
         user, _ = get_or_create_user(session, _current_user_id())
         profile = _get_workout_profile(session, user)
-        equipment = (
-            tuple(profile.equipment) if profile and profile.equipment else None
-        )
+        equipment = tuple(profile.equipment) if profile and profile.equipment else None
         entries = _search_exercise_candidates(
             query,
             equipment=equipment,
@@ -521,7 +519,9 @@ def build_workout_plan_draft(user_request: str) -> dict[str, Any]:
 
         schema = build_plan_schema(shortlist)
         retrieval_spec = rewrite_workout_query(user_request, profile)
-        structured_llm = get_llm("workout_plan").with_structured_output(schema)
+        structured_llm = get_llm("workout_plan").with_structured_output(
+            schema, method="json_schema"
+        )
 
         plan: dict[str, Any] = {}
         errors: tuple[str, ...] = ()

@@ -114,7 +114,9 @@ def rewrite_workout_query(
     fallback = _fallback_spec(user_request, profile)
     rewriter = llm if llm is not None else get_llm("workout_query_rewriter")
     try:
-        structured_rewriter = rewriter.with_structured_output(WorkoutRetrievalSpec)
+        structured_rewriter = rewriter.with_structured_output(
+            WorkoutRetrievalSpec, method="json_schema"
+        )
         result = structured_rewriter.invoke(_rewriter_prompt(user_request, profile))
         if isinstance(result, WorkoutRetrievalSpec):
             return result
