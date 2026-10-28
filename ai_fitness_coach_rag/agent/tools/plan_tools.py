@@ -56,6 +56,37 @@ from ai_fitness_coach_rag.llm.factory import get_llm
 
 _MAX_DRAFT_ATTEMPTS = 2
 
+# Twilio WhatsApp body cap is ~1600 chars; keep a safety margin below it.
+_MAX_SUMMARY_CHARS = 1400
+_TRUNCATION_SUFFIX = "\n…see your dashboard for the full plan."
+
+
+def _hard_truncate(text: str, limit: int) -> str:
+    """Cut ``text`` at a line boundary under ``limit`` chars, never exceeding it."""
+    if len(text) <= limit:
+        return text
+    cutoff = limit - len(_TRUNCATION_SUFFIX)
+    truncated = text[:cutoff].rsplit("\n", 1)[0]
+    return truncated + _TRUNCATION_SUFFIX
+
+
+def _plan_summary(plan_json: dict[str, Any]) -> str:
+    """Build a short, per-day WhatsApp summary; the full plan stays in the DB/UI."""
+    title = str(plan_json.get("title") or "Workout Plan")
+    lines = [f'Saved and activated "{title}"!']
+    for day in plan_json.get("days", []):
+        day_name = day.get("day", "Day")
+        focus = day.get("focus", "")
+        main_names = [
+            ex.get("name", "")
+            for ex in day.get("exercises", [])
+            if ex.get("exercise_type") == "main"
+        ]
+        exercises = ", ".join(main_names) or "rest/active recovery"
+        lines.append(f"- {day_name} ({focus}): {exercises}")
+    lines.append("Full plan with sets/reps is on your dashboard.")
+    return _hard_truncate("\n".join(lines), _MAX_SUMMARY_CHARS)
+
 
 def _current_user_id() -> str:
     """Thread id == hashed-phone user id, set by orchestrator's thread_config()."""
@@ -539,7 +570,11 @@ def validate_workout_plan(plan_json: dict[str, Any]) -> dict[str, Any]:
 def save_workout_plan(plan_json: dict[str, Any]) -> str:
     """Persist the exact user-approved plan JSON and archive any prior active
     plan. Only call this after the user has explicitly approved the plan.
-    Re-validates one final time and refuses to save an invalid plan.
+    Re-validates one final time and refuses to save an invalid plan. Returns
+    a short per-day summary capped well under the WhatsApp/Twilio message
+    limit -- the full plan is always saved to the DB and viewable on the
+    dashboard. Relay this return value to the user as-is, without adding
+    extra commentary that could push the reply past the limit.
     """
     session = SessionLocal()
     try:
@@ -567,6 +602,6 @@ def save_workout_plan(plan_json: dict[str, Any]) -> str:
         )
         session.add(plan_row)
         session.commit()
-        return f"Saved and activated workout plan '{plan_row.title}'."
+        return _plan_summary(plan_json)
     finally:
         session.close()

@@ -56,6 +56,20 @@ SYSTEM_PROMPT = get_prompt("fitness_coach_system")
 CONFIRM_YES = {"yes", "y", "confirm", "ok", "okay", "sure", "yep", "yeah"}
 CONFIRM_NO = {"no", "n", "cancel", "nope", "discard"}
 
+# Hard cap on outgoing WhatsApp text, independent of what the LLM generates --
+# Twilio's WhatsApp body limit is ~1600 chars; stay safely under it.
+_MAX_REPLY_CHARS = 1400
+_REPLY_TRUNCATION_SUFFIX = "\n…see your dashboard for full details."
+
+
+def _cap_reply_length(text: str) -> str:
+    """Hard-truncate an outgoing reply so it never exceeds the Twilio char limit."""
+    if len(text) <= _MAX_REPLY_CHARS:
+        return text
+    cutoff = _MAX_REPLY_CHARS - len(_REPLY_TRUNCATION_SUFFIX)
+    truncated = text[:cutoff].rsplit("\n", 1)[0] or text[:cutoff]
+    return truncated + _REPLY_TRUNCATION_SUFFIX
+
 # Exit strategy: after this many unrecognized replies, auto-cancel the pending log
 # instead of looping forever waiting for a clear YES/NO.
 MAX_CONFIRM_RETRIES = 2
@@ -190,7 +204,6 @@ class AgentOrchestrator:
         onboarding_reply, _ = _handle_onboarding(user_id, text)
         if onboarding_reply is not None:
             return onboarding_reply
-
         agent = await self._get_agent()
         config = thread_config(user_id)
 
@@ -228,7 +241,7 @@ class AgentOrchestrator:
         new_interrupts = result.get("__interrupt__")
         if new_interrupts:
             return await self._natural_language_confirm(new_interrupts)
-        return result["messages"][-1].content
+        return _cap_reply_length(result["messages"][-1].content)
 
     async def get_state(self, user_id: str) -> ConversationState:
         """Return the persisted conversation state for one user (debugging/tests)."""
