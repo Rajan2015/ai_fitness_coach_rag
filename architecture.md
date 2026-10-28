@@ -41,7 +41,7 @@ flowchart TB
     subgraph RAGStore["context/ — Qdrant"]
         NUT[(nutrition_facts<br/>BM25 sparse — ✅)]
         FIT[(fitness_principles<br/>hybrid dense+BM25 — 📋)]
-        EXE[(exercise_technique<br/>hybrid dense+BM25 — 📋)]
+        EXE[(exercise_knowledge<br/>hybrid dense+BM25 — ✅)]
         PDOC[(personal_docs_user_hash<br/>per-user isolated — 📋)]
         RRK[reranker.py<br/>cross-encoder — 🚧 empty]
     end
@@ -86,7 +86,7 @@ flowchart TB
     AGT --> T7
     T2 --> NUT
     T4 -. planned .-> FIT
-    T4 -. planned .-> EXE
+    T7 --> EXE
     FIT --> RRK
     EXE --> RRK
     T5 -. planned .-> PDOC
@@ -112,14 +112,14 @@ flowchart TB
 | # | Concept | Status | Where in repo | Tech used |
 |---|---|---|---|---|
 | 1 | **Chunking — lexical (BM25)** | ✅ Implemented | [nutrition_tools.py](ai_fitness_coach_rag/agent/tools/nutrition_tools.py) — indexes `nutrition_facts.json` as whole-entry "documents" (name + aliases), sparse vectors only | `langchain_qdrant.FastEmbedSparse("Qdrant/bm25")`, `RetrievalMode.SPARSE`, Qdrant |
-| 2 | **Chunking — semantic/hybrid (dense+BM25)** | 📋 Planned | [hybrid_qdrant.py (indexer)](ai_fitness_coach_rag/context/indexers/hybrid_qdrant.py), [hybrid_qdrant.py (retriever)](ai_fitness_coach_rag/context/retrievers/hybrid_qdrant.py) — both files exist but empty; target collections `fitness_principles`, `exercise_technique` | Target: `FastEmbedSparse` + dense embeddings, `RetrievalMode.HYBRID`, Qdrant, `text-embedding-3-small` (per [config.yaml](config.yaml)) |
+| 2 | **Exercise retrieval — semantic/hybrid (dense+BM25)** | ✅ Implemented | [exercise_qdrant.py (indexer)](ai_fitness_coach_rag/context/indexers/exercise_qdrant.py), [exercise_qdrant.py (retriever)](ai_fitness_coach_rag/context/retrievers/exercise_qdrant.py), and [plan_tools.py](ai_fitness_coach_rag/agent/tools/plan_tools.py) — indexes the curated bundled exercise catalog into `exercise_knowledge` during application startup | `OpenAIEmbeddings(text-embedding-3-small)` + `FastEmbedSparse("Qdrant/bm25")`, `RetrievalMode.HYBRID`, Qdrant |
 | 3 | **Eval metrics (GEval / contextual precision-recall)** | 📋 Planned | [tests/evals/metrics.py](tests/evals/metrics.py) empty; datasets already authored (`dataset_guardrails.json`, `dataset_logging_agent.json`, `dataset_rag_nutrition.json`, `dataset_onboarding.json`, `dataset_personal_doc_rag.json`, `dataset_summary_scoring.json`) | `deepeval` (`>=4.0.7`, dev dependency in [pyproject.toml](pyproject.toml)) |
 | 4 | **Ragas** | 📋 Planned, not in dependencies | Not referenced anywhere in code or `pyproject.toml` yet — current eval direction is DeepEval `GEval`, not Ragas | Would need `ragas` added as a dependency if adopted |
-| 5 | **RRF (Reciprocal Rank Fusion) / Ranking** | 📋 Planned | Implicit in hybrid retrieval design (dense+BM25 fusion is RRF under the hood in Qdrant/LangChain hybrid mode) — not yet implemented since hybrid retriever is empty | Target: Qdrant hybrid query fusion + [reranker.py](ai_fitness_coach_rag/context/retrievers/reranker.py) (empty) |
+| 5 | **RRF (Reciprocal Rank Fusion) / Ranking** | ✅ Built into exercise retrieval | Qdrant hybrid retrieval over `exercise_knowledge`; [reranker.py](ai_fitness_coach_rag/context/retrievers/reranker.py) remains unused | Qdrant hybrid query fusion |
 | 6 | **Reranking (cross-encoder)** | 📋 Planned | [reranker.py](ai_fitness_coach_rag/context/retrievers/reranker.py) — file exists, empty | Target: `sentence-transformers` MiniLM cross-encoder (local, no extra API cost) |
 | 7 | **Memory — STM (short-term)** | ✅ Implemented | [memory/short_term.py](ai_fitness_coach_rag/memory/short_term.py) — per-user (`thread_id=phone`) rolling conversation state + summarization | `langgraph-checkpoint-sqlite` (`AsyncSqliteSaver`), `langchain.agents.middleware.SummarizationMiddleware` |
 | 8 | **Memory — LTM (long-term)** | 🚧 Scaffolded only | [memory/long_term.py](ai_fitness_coach_rag/memory/long_term.py) — empty; intended as a lightweight soft-preference fact store (SQL, not vectorized) | Target: SQLAlchemy table, no embeddings |
-| 9 | **HNSW (vector index)** | 📋 Planned | Qdrant's default dense-vector index is HNSW — relevant once hybrid dense collections (`fitness_principles`/`exercise_technique`) and the Redis semantic cache are built; not exercised yet since both are empty/dense-free today (nutrition collection is sparse-only, no HNSW involved) | Target: Qdrant (dense side), `redisvl`/Redis vector index |
+| 9 | **HNSW (vector index)** | ✅ Used by exercise retrieval | Qdrant creates the dense-vector index for the `exercise_knowledge` hybrid collection; nutrition remains sparse-only | Qdrant |
 | 10 | **MCP (Model Context Protocol)** | 📋 Dependency present, unused | `langchain-mcp-adapters` listed in [pyproject.toml](pyproject.toml) but no MCP client/server wiring found anywhere in `agent/` | Target: `langchain-mcp-adapters` |
 | 11 | **Tools (agentic tool-calling)** | ✅ Implemented | [orchestrator.py](ai_fitness_coach_rag/agent/orchestrator.py) — `create_agent(tools=[lookup_nutrition, log_food, log_workout, log_metric, get_fitness_logs])` | `langchain.agents.create_agent`, `@tool` decorator (LangChain) |
 | 12 | **Skills** | 📋 Not present as a distinct concept | No skill-packaging abstraction in this repo (tools are flat `@tool` functions) | — |

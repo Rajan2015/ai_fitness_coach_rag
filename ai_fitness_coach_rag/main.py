@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from ai_fitness_coach_rag.agent.tools.nutrition_tools import (
     ensure_nutrition_collection_indexed,
 )
+from ai_fitness_coach_rag.context.indexers.exercise_qdrant import (
+    ensure_exercise_collection_indexed,
+)
 from ai_fitness_coach_rag.dashboard.auth_router import router as dashboard_auth_router
 from ai_fitness_coach_rag.db.session import initialize_database
 from ai_fitness_coach_rag.config import config
@@ -22,6 +25,7 @@ from ai_fitness_coach_rag.whatsapp.webhook import router as whatsapp_router
 async def lifespan(_: FastAPI):
     initialize_database()
     ensure_nutrition_collection_indexed()
+    ensure_exercise_collection_indexed()
     worker = ScoreWorker(
         float(config.get("scoring", {}).get("worker_interval_seconds", 3600))
     )
