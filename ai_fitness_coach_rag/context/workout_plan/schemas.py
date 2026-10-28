@@ -29,7 +29,12 @@ class PlanExerciseDraft(BaseModel):
     sets: int = Field(ge=1, le=6)
     reps: str = Field(description='Rep target, e.g. "8-12", "30s", "AMRAP".')
     rest_seconds: int = Field(ge=15, le=300)
-    notes: str = Field(default="", description="Short coaching cue for this exercise.")
+    # No default: OpenAI's strict json_schema structured-output mode rejects any
+    # property with a "default" key, and strict mode already forces every
+    # property into "required" regardless, so a default here would be both
+    # unusable and schema-invalid. Use "" explicitly in the prompt/validator
+    # if an empty note is an acceptable value.
+    notes: str = Field(description="Short coaching cue for this exercise.")
 
 
 class PlanDayDraft(BaseModel):
