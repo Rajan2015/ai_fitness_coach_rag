@@ -417,3 +417,112 @@ export async function getPlans(
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   }));
 }
+
+export type WorkoutExerciseType = "warm_up" | "main" | "cool_down";
+
+export interface WorkoutPlanExercise {
+  exerciseId: string;
+  name: string;
+  exerciseType: WorkoutExerciseType;
+  sets: number;
+  reps: string;
+  restSeconds: number;
+  notes: string | null;
+  imageUrl: string | null;
+}
+
+export interface WorkoutPlanDay {
+  day: string;
+  focus: string;
+  exercises: WorkoutPlanExercise[];
+}
+
+export interface WorkoutPlanDocument {
+  title: string;
+  goal: string;
+  days: WorkoutPlanDay[];
+  progressionRule: string | null;
+  safetyNote: string | null;
+}
+
+export type WorkoutPlanRecordStatus = "draft" | "active" | "archived";
+
+export interface WorkoutPlanRecord {
+  id: number;
+  status: WorkoutPlanRecordStatus;
+  title: string;
+  goalType: string;
+  plan: WorkoutPlanDocument;
+  approvedAt: string | null;
+  createdAt: string;
+}
+
+/** Normalizes raw plan_json (LLM/tool-authored, snake_case) into the camelCase shape the UI renders. */
+function normalizeWorkoutPlanJson(raw: unknown): WorkoutPlanDocument {
+  const doc = (raw ?? {}) as Record<string, unknown>;
+  const days = Array.isArray(doc.days) ? doc.days : [];
+
+  return {
+    title: typeof doc.title === "string" ? doc.title : "Workout Plan",
+    goal: typeof doc.goal === "string" ? doc.goal : "maintain",
+    progressionRule: typeof doc.progression_rule === "string" ? doc.progression_rule : null,
+    safetyNote: typeof doc.safety_note === "string" ? doc.safety_note : null,
+    days: days.map((rawDay) => {
+      const day = (rawDay ?? {}) as Record<string, unknown>;
+      const exercises = Array.isArray(day.exercises) ? day.exercises : [];
+      return {
+        day: typeof day.day === "string" ? day.day : "Day",
+        focus: typeof day.focus === "string" ? day.focus : "",
+        exercises: exercises.map((rawExercise) => {
+          const exercise = (rawExercise ?? {}) as Record<string, unknown>;
+          const exerciseType = String(exercise.exercise_type ?? "main").toLowerCase();
+          return {
+            exerciseId: String(exercise.exercise_id ?? ""),
+            name: typeof exercise.name === "string" ? exercise.name : "Exercise",
+            exerciseType: (["warm_up", "main", "cool_down"].includes(exerciseType)
+              ? exerciseType
+              : "main") as WorkoutExerciseType,
+            sets: Number(exercise.sets ?? 0),
+            reps: String(exercise.reps ?? ""),
+            restSeconds: Number(exercise.rest_seconds ?? 0),
+            notes: typeof exercise.notes === "string" && exercise.notes.length > 0 ? exercise.notes : null,
+            imageUrl: typeof exercise.image_url === "string" ? exercise.image_url : null,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+/** Reads approved (active/archived) workout plans directly from Postgres; the dashboard never generates or edits plans. */
+export async function getWorkoutPlans(userId: number): Promise<WorkoutPlanRecord[]> {
+  const { rows } = await getPool().query(
+    `SELECT id, status, title, goal_type, plan_json, approved_at, created_at
+     FROM workout_plans
+     WHERE user_id = $1 AND approved_at IS NOT NULL
+     ORDER BY CASE WHEN UPPER(status) = 'ACTIVE' THEN 0 ELSE 1 END, approved_at DESC`,
+    [userId]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    // status/goal_type may be persisted as the enum NAME (e.g. "ACTIVE") rather than its value.
+    status: String(row.status).toLowerCase() as WorkoutPlanRecordStatus,
+    title: row.title,
+    goalType: String(row.goal_type).toLowerCase(),
+    plan: normalizeWorkoutPlanJson(row.plan_json),
+    approvedAt:
+      row.approved_at instanceof Date ? row.approved_at.toISOString() : row.approved_at ? String(row.approved_at) : null,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  }));
+}
+
+/** Rough session-length estimate: set work time plus rest between sets, summed across all exercises. */
+export function estimateDayMinutes(day: WorkoutPlanDay): number {
+  const SECONDS_PER_SET = 40;
+  const totalSeconds = day.exercises.reduce((sum, exercise) => {
+    const sets = Math.max(1, exercise.sets);
+    return sum + sets * (SECONDS_PER_SET + exercise.restSeconds);
+  }, 0);
+  return Math.max(1, Math.round(totalSeconds / 60));
+}
